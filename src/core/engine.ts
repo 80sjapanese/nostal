@@ -4,7 +4,6 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { useAppStore } from '../store/useAppStore';
 import { getPlugin } from './pluginRegistry';
-import { LayerInstance, PluginDefinition } from '../types/Plugin';
 
 export class Engine {
   private renderer: THREE.WebGLRenderer;
@@ -13,10 +12,14 @@ export class Engine {
   private camera: THREE.OrthographicCamera;
   private imageTexture: THREE.Texture | null = null;
   private canvas: HTMLCanvasElement;
-  private layerPasses = new Map<string, ShaderPass>();
   
   private renderWidth: number = 1024;
   private renderHeight: number = 1024;
+
+  // レイヤーIDとShaderPassの紐付け管理
+  private passMap = new Map<string, ShaderPass>();
+  // 前回のレイヤー構造（IDの配列）を保持して差分検知に使う
+  private prevLayerStructure: string[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -29,9 +32,7 @@ export class Engine {
     });
     
     this.renderer.setPixelRatio(1);
-    
-    // 【修正1】エラー回避のため NoColorSpace ではなく LinearSRGBColorSpace を使用
-    // これにより自動的なガンマ補正(sRGBEncoding)が無効化され、値がそのまま出力されます
+    // ガンマ補正なしのリニア出力
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 
     this.scene = new THREE.Scene();
@@ -49,33 +50,46 @@ export class Engine {
   }
 
   private setupSubscribers() {
+    // 画像変更 -> 全リビルド
     useAppStore.subscribe(state => state.imageSrc, (src) => {
       if (src) this.loadImage(src);
     });
 
-    useAppStore.subscribe(
-      (state) => state.layers,
-      (layers, prevLayers) => {
-        if (!this.imageTexture) return;
+    // レイヤー変更 -> 構造が変わったかチェックして分岐
+    useAppStore.subscribe(state => state.layers, (layers) => {
+      if (!this.imageTexture) return;
 
-        if (!this.composer || this.needsPipelineRebuild(layers, prevLayers)) {
-          this.rebuildPipeline();
-        } else {
-          this.updateLayerUniforms(layers);
-        }
+      const currentStructure = layers.map(l => `${l.id}-${l.visible}`);
+      const isStructureChanged = !this.arraysEqual(this.prevLayerStructure, currentStructure);
 
+      if (isStructureChanged) {
+        this.rebuildPipeline();
+      } else {
+        this.updatePassParameters();
+      }
+      this.render();
+    });
+
+    // 一時パラメータ変更（ドラッグ中） -> 値だけ更新
+    useAppStore.subscribe(state => state.transientParams, () => {
+      if (this.imageTexture) {
+        this.updatePassParameters();
         this.render();
       }
-    );
+    });
 
-    useAppStore.subscribe(
-      (state) => state.transientParams,
-      () => {
-        if (!this.imageTexture || !this.composer) return;
-        this.updateLayerUniforms(useAppStore.getState().layers);
-        this.render();
-      }
-    );
+    // 比較モード変更 -> 再描画（Composerをバイパスするか切り替え）
+    useAppStore.subscribe(state => state.isComparing, () => {
+      this.render();
+    });
+  }
+
+  private arraysEqual(a: string[], b: string[]) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
   }
 
   private loadImage(src: string) {
@@ -85,12 +99,8 @@ export class Engine {
       if (this.imageTexture) this.imageTexture.dispose();
 
       this.imageTexture = tex;
-      
-      // 【修正2】テクスチャ側も NoColorSpace (または LinearSRGBColorSpace) に設定
-      // "NoColorSpace" でエラーが出る場合は "LinearSRGBColorSpace" にしてください
-      // ここでは念のため NoColorSpace のままにしますが、もし同様のエラーが出るなら変更してください
+      // 生のRGB値として扱う
       tex.colorSpace = THREE.NoColorSpace; 
-      
       tex.minFilter = THREE.LinearFilter;
       tex.magFilter = THREE.LinearFilter;
       tex.generateMipmaps = false; 
@@ -111,6 +121,7 @@ export class Engine {
 
       this.renderer.setSize(this.renderWidth, this.renderHeight);
       
+      this.prevLayerStructure = [];
       this.rebuildPipeline();
       this.render();
     });
@@ -119,10 +130,11 @@ export class Engine {
   private rebuildPipeline() {
     if (!this.imageTexture) return;
 
-    this.layerPasses.clear();
     this.composer = new EffectComposer(this.renderer);
     this.composer.setSize(this.renderWidth, this.renderHeight);
     
+    this.passMap.clear();
+
     // Base Pass
     const planeGeo = new THREE.PlaneGeometry(2, 2);
     const planeMat = new THREE.MeshBasicMaterial({ 
@@ -140,19 +152,21 @@ export class Engine {
     this.composer.addPass(basePass);
 
     // Layer Passes
-    const { layers } = useAppStore.getState();
+    const { layers, transientParams } = useAppStore.getState();
     
+    this.prevLayerStructure = layers.map(l => `${l.id}-${l.visible}`);
+
     layers.forEach(layer => {
       if (!layer.visible) return;
       const plugin = getPlugin(layer.pluginId);
       if (!plugin) return;
       
-      const resolvedParams = this.resolveLayerParams(layer, plugin);
+      const currentParams = { ...layer.params, ...(transientParams[layer.id] || {}) };
 
       const material = new THREE.ShaderMaterial({
         uniforms: {
           tDiffuse: { value: null },
-          ...this.createUniforms(plugin, resolvedParams)
+          ...this.createUniforms(plugin, currentParams)
         },
         vertexShader: `
           varying vec2 vUv;
@@ -167,80 +181,68 @@ export class Engine {
 
       const pass = new ShaderPass(material);
       this.composer?.addPass(pass);
-      this.layerPasses.set(layer.id, pass);
+
+      this.passMap.set(layer.id, pass);
     });
   }
 
-  private createUniforms(plugin: PluginDefinition, params: Record<string, any>) {
-    const uniforms: Record<string, { value: any }> = {};
-    plugin.parameters.forEach((param) => {
-      const val = params[param.key] ?? (param as any).default;
-      uniforms[param.key] = { value: val };
-    });
-    return uniforms;
-  }
+  private updatePassParameters() {
+    const { layers, transientParams } = useAppStore.getState();
 
-  private resolveLayerParams(layer: LayerInstance, plugin: PluginDefinition) {
-    const { transientParams } = useAppStore.getState();
-    const pending = transientParams[layer.id] || {};
-    const combined = { ...layer.params, ...pending };
-    const resolved: Record<string, any> = {};
-
-    plugin.parameters.forEach((param) => {
-      const value = combined[param.key];
-      if (value !== undefined) {
-        resolved[param.key] = value;
-      } else if ('default' in param) {
-        resolved[param.key] = (param as any).default;
-      }
-    });
-
-    return resolved;
-  }
-
-  private needsPipelineRebuild(nextLayers: LayerInstance[], prevLayers?: LayerInstance[]) {
-    if (!prevLayers || nextLayers.length !== prevLayers.length) return true;
-
-    for (let i = 0; i < nextLayers.length; i += 1) {
-      const next = nextLayers[i];
-      const prev = prevLayers[i];
-      if (!prev) return true;
-      if (next.id !== prev.id) return true;
-      if (next.pluginId !== prev.pluginId) return true;
-      if (next.visible !== prev.visible) return true;
-    }
-
-    return false;
-  }
-
-  private updateLayerUniforms(layers: LayerInstance[]) {
-    layers.forEach((layer) => {
-      const pass = this.layerPasses.get(layer.id);
-      if (!pass) return;
+    layers.forEach(layer => {
+      const pass = this.passMap.get(layer.id);
+      if (!pass || !layer.visible) return;
 
       const plugin = getPlugin(layer.pluginId);
       if (!plugin) return;
 
-      const resolvedParams = this.resolveLayerParams(layer, plugin);
-      plugin.parameters.forEach((param) => {
-        const uniform = pass.uniforms[param.key];
-        if (uniform) {
-          uniform.value = resolvedParams[param.key] ?? (param as any).default;
-        }
-      });
+      const currentParams = { ...layer.params, ...(transientParams[layer.id] || {}) };
+      
+      if (pass.material instanceof THREE.ShaderMaterial) {
+        const uniforms = pass.material.uniforms;
+        plugin.parameters.forEach((p: any) => {
+           const val = currentParams[p.key] ?? p.default;
+           if (uniforms[p.key]) {
+             uniforms[p.key].value = val;
+           }
+        });
+      }
     });
   }
 
+  private createUniforms(plugin: any, params: Record<string, number>) {
+    const uniforms: Record<string, { value: any }> = {};
+    plugin.parameters.forEach((p: any) => {
+        const val = params[p.key] ?? p.default;
+        uniforms[p.key] = { value: val };
+    });
+    return uniforms;
+  }
+
   public render() {
-    if (this.composer) {
+    // 比較モードなら Composer (エフェクト) をバイパスする
+    const isComparing = useAppStore.getState().isComparing;
+
+    if (this.composer && !isComparing) {
       this.composer.render();
     } else {
       this.renderer.render(this.scene, this.camera);
     }
   }
   
+  // 【ここが重要】メモリリークを防ぐための後始末メソッド
   public dispose() {
     this.renderer.dispose();
     this.imageTexture?.dispose();
+    this.passMap.clear();
+    // シーン内のメッシュやマテリアルも解放するのがベスト
+    this.scene.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        object.geometry.dispose();
+        if (object.material instanceof THREE.Material) {
+          object.material.dispose();
+        }
+      }
+    });
   }
 }

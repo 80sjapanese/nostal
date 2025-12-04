@@ -9,6 +9,7 @@ interface AppState {
   layers: LayerInstance[];
   transientParams: Record<string, Record<string, number>>; 
   selectedLayerId: string | null;
+  isComparing: boolean;
 
   setImage: (src: string) => void;
   addLayer: (pluginId: string) => void;
@@ -17,6 +18,7 @@ interface AppState {
   reorderLayers: (newLayers: LayerInstance[]) => void;
   setTransientParam: (layerId: string, key: string, value: number) => void;
   commitParam: (layerId: string, key: string, value: number) => void;
+  setIsComparing: (isComparing: boolean) => void;
 }
 
 export const useAppStore = create(
@@ -27,6 +29,7 @@ export const useAppStore = create(
         layers: [],
         transientParams: {},
         selectedLayerId: null,
+        isComparing: false,
 
         setImage: (src) => set({ imageSrc: src }),
 
@@ -52,7 +55,6 @@ export const useAppStore = create(
 
         reorderLayers: (newLayers) => set({ layers: newLayers }),
 
-        // ドラッグ中はここだけ更新（履歴に残らない）
         setTransientParam: (layerId, key, value) => set((state) => ({
           transientParams: {
             ...state.transientParams,
@@ -61,7 +63,7 @@ export const useAppStore = create(
         })),
 
         // ドラッグ終了時に確定（履歴に残る）
-        commitParam: (layerId, key, value) => set((state) => {
+        commitParam: (layerId, key, value) => set((state) => {/* ...省略... */
           const { [layerId]: _, ...remainingTransients } = state.transientParams;
           return {
             transientParams: remainingTransients,
@@ -72,16 +74,15 @@ export const useAppStore = create(
             )
           };
         }),
+
+        setIsComparing: (isComparing) => set({ isComparing }),
       }),
       {
-        // 【修正1】 imageSrc を履歴管理から除外。これでUndoしても画像は消えない。
-        partialize: (state) => ({ layers: state.layers } as unknown as AppState),
-
-        // 【修正2】 layersの中身が厳密に同じなら履歴に追加しない（ドラッグ中の微細な反応防止）
+        // imageSrc と isComparing は履歴管理しない
+        partialize: (state) => ({ layers: state.layers } as AppState),
         equality: (pastState, currentState) => {
           return JSON.stringify(pastState.layers) === JSON.stringify(currentState.layers);
         },
-        
         limit: 50
       }
     )

@@ -3,57 +3,56 @@ import { useAppStore } from '../store/useAppStore';
 import { Engine } from '../core/engine';
 import { pluginRegistry } from '../core/pluginRegistry';
 import { Slider } from './components/Slider';
-import { TiledExporter } from '../core/exporter/TiledExporter';
-import { DndContext, closestCenter, DragEndEvent } from '@dnd-kit/core';
-import { SortableContext, arrayMove, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import { useStore } from 'zustand';
 import { Select } from './components/Select';
 import { Checkbox } from './components/Checkbox';
+import { TiledExporter } from '../core/exporter/TiledExporter';
+import { useCanvasInteraction } from './hooks/useCanvasInteraction';
+// 作成したコンポーネントをインポート
+import { SortableLayerItem } from './components/SortableLayerItem';
+import { useStore } from 'zustand';
 
-// ... (SortableLayerItem code is same) ...
-const SortableLayerItem = ({ layer, isSelected, onClick }: any) => {
-  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: layer.id });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    padding: '10px',
-    backgroundColor: isSelected ? '#444' : '#222',
-    border: isSelected ? '1px solid #00aaff' : '1px solid #555',
-    marginBottom: '4px',
-    color: '#fff',
-    cursor: 'pointer',
-    userSelect: 'none' as const,
-    whiteSpace: 'nowrap' as const
-  };
-
-  return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners} onClick={onClick}>
-       {pluginRegistry[layer.pluginId]?.name || 'Unknown'}
-    </div>
-  );
-};
+// dnd-kit 関連
+import { 
+  DndContext, 
+  closestCenter, 
+  DragEndEvent,
+  PointerSensor,
+  useSensor,
+  useSensors
+} from '@dnd-kit/core';
+import { 
+  SortableContext, 
+  arrayMove, 
+  horizontalListSortingStrategy // 横並びなのでこちらが適切
+} from '@dnd-kit/sortable';
 
 export const EditorLayout: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
-  const imageElementRef = useRef<HTMLImageElement | null>(null); // Export用に元画像を保持
+  const imageElementRef = useRef<HTMLImageElement | null>(null);
   
-// Store hooks
   const { 
     layers, selectedLayerId, transientParams, 
     addLayer, selectLayer, reorderLayers, 
     setTransientParam, commitParam, imageSrc 
   } = useAppStore();
 
-  // 【修正2】 Undo/Redo (zundo) の取得方法を変更
-  // useAppStore.temporal はストアのインスタンスなので、useStore() でラップしてフックとして使います
   const { undo, redo, pastStates, futureStates } = useStore(useAppStore.temporal, (state) => state);
-  // Zundoの状態をReactで検知するためにuseStoreでラップする必要があるため、
-  // 上の useStore(...) で temporal store の state を購読しています。
-
   const [activeCategory, setActiveCategory] = useState<string>('subjects');
   const [isExporting, setIsExporting] = useState(false);
+
+  const canvasInteraction = useCanvasInteraction();
+
+  // 【重要】ドラッグの感度設定
+  // 5px以上動かさないとドラッグイベントを開始しない
+  // これにより、単なるクリック(0px移動)は onClick として処理されるようになる
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    })
+  );
 
   useEffect(() => {
     if (canvasRef.current && !engineRef.current) {
@@ -62,7 +61,6 @@ export const EditorLayout: React.FC = () => {
     return () => engineRef.current?.dispose();
   }, []);
 
-  // Export用に画像要素を作っておく
   useEffect(() => {
     if (imageSrc) {
         const img = new Image();
@@ -85,6 +83,7 @@ export const EditorLayout: React.FC = () => {
   };
 
   const handleDownload = async () => {
+    /* ... 既存のダウンロード処理 ... */
     if (!imageElementRef.current || isExporting) return;
     setIsExporting(true);
     try {
@@ -96,7 +95,7 @@ export const EditorLayout: React.FC = () => {
         a.click();
         URL.revokeObjectURL(url);
     } catch (e) {
-        console.error("Export failed", e);
+        console.error(e);
         alert("Export failed");
     } finally {
         setIsExporting(false);
@@ -105,9 +104,8 @@ export const EditorLayout: React.FC = () => {
 
   const handleSavePreset = () => {
       const preset = JSON.stringify(layers, null, 2);
-      console.log("--- PRESET DATA ---");
       console.log(preset);
-      alert("Preset data logged to console.");
+      alert("Preset logged.");
   };
 
   return (
@@ -143,35 +141,17 @@ export const EditorLayout: React.FC = () => {
 
       {/* 3. Main Area */}
       <div className="main-area">
-        <div className="preview-area">
+        <div className="preview-area" {...canvasInteraction}>
           <canvas ref={canvasRef} />
           
-{/* Top Left: Undo/Redo */}
           <div className="toolbar-top-left">
-             <button 
-               onClick={() => undo()} // ここで undo を使用
-               disabled={pastStates.length === 0} // ここで pastStates を使用
-               title="Undo"
-             >
-                ◀
-             </button>
-             <button 
-               onClick={() => redo()} // ここで redo を使用
-               disabled={futureStates.length === 0} // ここで futureStates を使用
-               title="Redo"
-             >
-                ▶
-             </button>
+             <button onClick={() => undo()} disabled={pastStates.length === 0}>◀</button>
+             <button onClick={() => redo()} disabled={futureStates.length === 0}>▶</button>
           </div>
 
-          {/* Top Right: Preset & Download */}
           <div className="toolbar-top-right">
-             <button onClick={handleSavePreset} title="Save Preset">
-                💾 Preset
-             </button>
-             <button onClick={handleDownload} disabled={isExporting} title="Download">
-                {isExporting ? '...' : '⬇ Download'}
-             </button>
+             <button onClick={handleSavePreset}>💾</button>
+             <button onClick={handleDownload} disabled={isExporting}>⬇</button>
           </div>
         </div>
 
@@ -179,9 +159,17 @@ export const EditorLayout: React.FC = () => {
         <div className="layer-panel">
           <h3>Layers</h3>
           <div className="layer-list-horizontal">
-            <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <SortableContext items={layers} strategy={verticalListSortingStrategy}>
-                 <div style={{display: 'flex', gap: '8px', overflowX: 'auto'}}>
+            {/* センサーを適用 */}
+            <DndContext 
+              sensors={sensors} 
+              collisionDetection={closestCenter} 
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext 
+                items={layers} 
+                strategy={horizontalListSortingStrategy} // 横並び用ストラテジーに変更
+              >
+                 <div style={{display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '10px'}}>
                     {layers.map(layer => (
                       <SortableLayerItem 
                         key={layer.id} 
@@ -198,29 +186,30 @@ export const EditorLayout: React.FC = () => {
       </div>
 
       {/* 5. Controls */}
-    <div className="sidebar-controls">
+      <div className="sidebar-controls">
         <h3>Controls</h3>
         {selectedLayer && selectedPlugin ? (
           <div>
             <h4>{selectedPlugin.name}</h4>
+            <div style={{ fontSize: '0.8rem', color: '#888', marginBottom: '1rem' }}>
+              ID: {selectedLayer.id.slice(0,8)}...
+            </div>
+            
             {selectedPlugin.parameters.map(param => {
-              // 現在のパラメータ値を取得（マージ済み）
               const allParams = { ...selectedLayer.params, ...transientParams[selectedLayer.id] };
               const currentVal = allParams[param.key] ?? param.default;
 
-              // 【重要】visibleIf の判定ロジック
+              // visibleIf ロジック
               if (param.visibleIf) {
                 const targetVal = allParams[param.visibleIf.key];
-                // 依存先の値がまだ未設定ならデフォルト値を取得して比較
                 const targetDefault = selectedPlugin.parameters.find(p => p.key === param.visibleIf!.key)?.default;
                 const actualTargetVal = targetVal ?? targetDefault;
 
                 if (actualTargetVal !== param.visibleIf.value) {
-                  return null; // 非表示
+                  return null;
                 }
               }
 
-              // 型に応じたコンポーネントの出し分け
               if (param.type === 'slider') {
                 return (
                   <Slider
@@ -247,12 +236,12 @@ export const EditorLayout: React.FC = () => {
                 );
               }
               if (param.type === 'checkbox') {
-                return (
+                 return (
                   <Checkbox
                     key={param.key}
                     label={param.label}
-                    checked={!!currentVal} // booleanにキャスト
-                    onChange={(val) => setTransientParam(selectedLayer.id, param.key, val ? 1 : 0)} // GLSL用に数値化(0/1)推奨
+                    checked={!!currentVal}
+                    onChange={(val) => setTransientParam(selectedLayer.id, param.key, val ? 1 : 0)}
                     onCommit={(val) => commitParam(selectedLayer.id, param.key, val ? 1 : 0)}
                   />
                 );
