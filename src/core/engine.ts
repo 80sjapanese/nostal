@@ -4,6 +4,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { useAppStore } from '../store/useAppStore';
 import { getPlugin } from './pluginRegistry';
+import { LayerInstance, PluginDefinition } from '../types/Plugin';
 
 export class Engine {
   private renderer: THREE.WebGLRenderer;
@@ -12,7 +13,7 @@ export class Engine {
   private camera: THREE.OrthographicCamera;
   private imageTexture: THREE.Texture | null = null;
   private canvas: HTMLCanvasElement;
-  private passes: Map<string, ShaderPass> = new Map();
+  private layerPasses = new Map<string, ShaderPass>();
   
   private renderWidth: number = 1024;
   private renderHeight: number = 1024;
@@ -52,26 +53,29 @@ export class Engine {
       if (src) this.loadImage(src);
     });
 
-    // パイプライン構造の変更（レイヤー追加・削除・並び替え・可視性）時のみ再構築
     useAppStore.subscribe(
-      state => state.layers, 
-      () => {
-        if (this.imageTexture) {
-          this.rebuildPipeline();
-          this.render();
-        }
-      },
-      // equalityFn: レイヤーのID、順序、可視性が変わった場合のみ通知
-      { equalityFn: (a, b) => a.length === b.length && a.every((v, i) => v.id === b[i].id && v.visible === b[i].visible) }
-    );
+      (state) => state.layers,
+      (layers, prevLayers) => {
+        if (!this.imageTexture) return;
 
-    // パラメータ変更時は uniform のみを更新
-    useAppStore.subscribe(state => state.transientParams, () => {
-      if (this.imageTexture) {
-        this.updateUniforms();
+        if (!this.composer || this.needsPipelineRebuild(layers, prevLayers)) {
+          this.rebuildPipeline();
+        } else {
+          this.updateLayerUniforms(layers);
+        }
+
         this.render();
       }
-    });
+    );
+
+    useAppStore.subscribe(
+      (state) => state.transientParams,
+      () => {
+        if (!this.imageTexture || !this.composer) return;
+        this.updateLayerUniforms(useAppStore.getState().layers);
+        this.render();
+      }
+    );
   }
 
   private loadImage(src: string) {
@@ -115,9 +119,9 @@ export class Engine {
   private rebuildPipeline() {
     if (!this.imageTexture) return;
 
+    this.layerPasses.clear();
     this.composer = new EffectComposer(this.renderer);
     this.composer.setSize(this.renderWidth, this.renderHeight);
-    this.passes.clear(); // Passのキャッシュをクリア
     
     // Base Pass
     const planeGeo = new THREE.PlaneGeometry(2, 2);
@@ -136,19 +140,19 @@ export class Engine {
     this.composer.addPass(basePass);
 
     // Layer Passes
-    const { layers, transientParams } = useAppStore.getState();
+    const { layers } = useAppStore.getState();
     
     layers.forEach(layer => {
       if (!layer.visible) return;
       const plugin = getPlugin(layer.pluginId);
       if (!plugin) return;
       
-      const currentParams = { ...layer.params, ...(transientParams[layer.id] || {}) };
+      const resolvedParams = this.resolveLayerParams(layer, plugin);
 
       const material = new THREE.ShaderMaterial({
         uniforms: {
           tDiffuse: { value: null },
-          ...this.createUniforms(plugin, currentParams)
+          ...this.createUniforms(plugin, resolvedParams)
         },
         vertexShader: `
           varying vec2 vUv;
@@ -163,39 +167,68 @@ export class Engine {
 
       const pass = new ShaderPass(material);
       this.composer?.addPass(pass);
-      this.passes.set(layer.id, pass); // 生成したPassをIDと紐付けてキャッシュ
+      this.layerPasses.set(layer.id, pass);
     });
   }
 
-  // パラメータ変更時にUniformの値だけを効率的に更新する
-  private updateUniforms() {
-    const { layers, transientParams } = useAppStore.getState();
-    
-    layers.forEach(layer => {
-      const pass = this.passes.get(layer.id);
-      if (!pass || !layer.visible) return;
+  private createUniforms(plugin: PluginDefinition, params: Record<string, any>) {
+    const uniforms: Record<string, { value: any }> = {};
+    plugin.parameters.forEach((param) => {
+      const val = params[param.key] ?? (param as any).default;
+      uniforms[param.key] = { value: val };
+    });
+    return uniforms;
+  }
+
+  private resolveLayerParams(layer: LayerInstance, plugin: PluginDefinition) {
+    const { transientParams } = useAppStore.getState();
+    const pending = transientParams[layer.id] || {};
+    const combined = { ...layer.params, ...pending };
+    const resolved: Record<string, any> = {};
+
+    plugin.parameters.forEach((param) => {
+      const value = combined[param.key];
+      if (value !== undefined) {
+        resolved[param.key] = value;
+      } else if ('default' in param) {
+        resolved[param.key] = (param as any).default;
+      }
+    });
+
+    return resolved;
+  }
+
+  private needsPipelineRebuild(nextLayers: LayerInstance[], prevLayers?: LayerInstance[]) {
+    if (!prevLayers || nextLayers.length !== prevLayers.length) return true;
+
+    for (let i = 0; i < nextLayers.length; i += 1) {
+      const next = nextLayers[i];
+      const prev = prevLayers[i];
+      if (!prev) return true;
+      if (next.id !== prev.id) return true;
+      if (next.pluginId !== prev.pluginId) return true;
+      if (next.visible !== prev.visible) return true;
+    }
+
+    return false;
+  }
+
+  private updateLayerUniforms(layers: LayerInstance[]) {
+    layers.forEach((layer) => {
+      const pass = this.layerPasses.get(layer.id);
+      if (!pass) return;
 
       const plugin = getPlugin(layer.pluginId);
       if (!plugin) return;
 
-      const currentParams = { ...layer.params, ...(transientParams[layer.id] || {}) };
-      
-      plugin.parameters.forEach((p: any) => {
-        const uniform = pass.material.uniforms[p.key];
+      const resolvedParams = this.resolveLayerParams(layer, plugin);
+      plugin.parameters.forEach((param) => {
+        const uniform = pass.uniforms[param.key];
         if (uniform) {
-          uniform.value = currentParams[p.key] ?? p.default;
+          uniform.value = resolvedParams[param.key] ?? (param as any).default;
         }
       });
     });
-  }
-
-  private createUniforms(plugin: any, params: Record<string, number>) {
-    const uniforms: Record<string, { value: any }> = {};
-    plugin.parameters.forEach((p: any) => {
-        const val = params[p.key] ?? p.default;
-        uniforms[p.key] = { value: val };
-    });
-    return uniforms;
   }
 
   public render() {
