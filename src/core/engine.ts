@@ -12,6 +12,7 @@ export class Engine {
   private camera: THREE.OrthographicCamera;
   private imageTexture: THREE.Texture | null = null;
   private canvas: HTMLCanvasElement;
+  private passes: Map<string, ShaderPass> = new Map();
   
   private renderWidth: number = 1024;
   private renderHeight: number = 1024;
@@ -51,15 +52,26 @@ export class Engine {
       if (src) this.loadImage(src);
     });
 
-    useAppStore.subscribe(state => state.layers, () => this.triggerRender());
-    useAppStore.subscribe(state => state.transientParams, () => this.triggerRender());
-  }
-  
-  private triggerRender() {
-    if (this.imageTexture) {
-      this.rebuildPipeline();
-      this.render();
-    }
+    // パイプライン構造の変更（レイヤー追加・削除・並び替え・可視性）時のみ再構築
+    useAppStore.subscribe(
+      state => state.layers, 
+      () => {
+        if (this.imageTexture) {
+          this.rebuildPipeline();
+          this.render();
+        }
+      },
+      // equalityFn: レイヤーのID、順序、可視性が変わった場合のみ通知
+      { equalityFn: (a, b) => a.length === b.length && a.every((v, i) => v.id === b[i].id && v.visible === b[i].visible) }
+    );
+
+    // パラメータ変更時は uniform のみを更新
+    useAppStore.subscribe(state => state.transientParams, () => {
+      if (this.imageTexture) {
+        this.updateUniforms();
+        this.render();
+      }
+    });
   }
 
   private loadImage(src: string) {
@@ -105,6 +117,7 @@ export class Engine {
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.setSize(this.renderWidth, this.renderHeight);
+    this.passes.clear(); // Passのキャッシュをクリア
     
     // Base Pass
     const planeGeo = new THREE.PlaneGeometry(2, 2);
@@ -150,6 +163,29 @@ export class Engine {
 
       const pass = new ShaderPass(material);
       this.composer?.addPass(pass);
+      this.passes.set(layer.id, pass); // 生成したPassをIDと紐付けてキャッシュ
+    });
+  }
+
+  // パラメータ変更時にUniformの値だけを効率的に更新する
+  private updateUniforms() {
+    const { layers, transientParams } = useAppStore.getState();
+    
+    layers.forEach(layer => {
+      const pass = this.passes.get(layer.id);
+      if (!pass || !layer.visible) return;
+
+      const plugin = getPlugin(layer.pluginId);
+      if (!plugin) return;
+
+      const currentParams = { ...layer.params, ...(transientParams[layer.id] || {}) };
+      
+      plugin.parameters.forEach((p: any) => {
+        const uniform = pass.material.uniforms[p.key];
+        if (uniform) {
+          uniform.value = currentParams[p.key] ?? p.default;
+        }
+      });
     });
   }
 
