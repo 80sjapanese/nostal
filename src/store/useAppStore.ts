@@ -4,12 +4,20 @@ import { temporal } from 'zundo';
 import { LayerInstance } from '../types/Plugin';
 import { v4 as uuidv4 } from 'uuid';
 
+interface ViewTransform {
+  x: number;
+  y: number;
+  scale: number;
+}
+
 interface AppState {
   imageSrc: string | null;
   layers: LayerInstance[];
   transientParams: Record<string, Record<string, number>>; 
   selectedLayerId: string | null;
   isComparing: boolean;
+  isFullscreen: boolean;
+  viewTransform: ViewTransform;
 
   setImage: (src: string) => void;
   addLayer: (pluginId: string) => void;
@@ -19,6 +27,8 @@ interface AppState {
   setTransientParam: (layerId: string, key: string, value: number) => void;
   commitParam: (layerId: string, key: string, value: number) => void;
   setIsComparing: (isComparing: boolean) => void;
+  toggleFullscreen: () => void;
+  setViewTransform: (transform: ViewTransform | ((prev: ViewTransform) => ViewTransform)) => void;
 }
 
 export const useAppStore = create(
@@ -30,6 +40,8 @@ export const useAppStore = create(
         transientParams: {},
         selectedLayerId: null,
         isComparing: false,
+        isFullscreen: false,
+        viewTransform: { x: 0, y: 0, scale: 1 },
 
         setImage: (src) => set({ imageSrc: src }),
 
@@ -76,9 +88,18 @@ export const useAppStore = create(
         }),
 
         setIsComparing: (isComparing) => set({ isComparing }),
+
+        toggleFullscreen: () => set((state) => ({ 
+          isFullscreen: !state.isFullscreen,
+          viewTransform: { x: 0, y: 0, scale: 1 } 
+        })),
+
+        setViewTransform: (transform) => set((state) => ({
+          viewTransform: typeof transform === 'function' ? transform(state.viewTransform) : transform
+        })),
       }),
       {
-        // imageSrc と isComparing は履歴管理しない
+        // imageSrc, isComparing, isFullscreen, viewTransform は履歴管理しない
         partialize: (state) => ({ layers: state.layers } as AppState),
         equality: (pastState, currentState) => {
           return JSON.stringify(pastState.layers) === JSON.stringify(currentState.layers);

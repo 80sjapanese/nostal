@@ -34,7 +34,8 @@ export const EditorLayout: React.FC = () => {
   const { 
     layers, selectedLayerId, transientParams, 
     addLayer, selectLayer, reorderLayers, 
-    setTransientParam, commitParam, imageSrc 
+    setTransientParam, commitParam, imageSrc,
+    isFullscreen, viewTransform
   } = useAppStore();
 
   const { undo, redo, pastStates, futureStates } = useStore(useAppStore.temporal, (state) => state);
@@ -108,6 +109,10 @@ export const EditorLayout: React.FC = () => {
       alert("Preset logged.");
   };
 
+  const stopPropagation = (e: React.SyntheticEvent) => {
+    e.stopPropagation();
+  };
+
   return (
     <div className="editor-container">
       {/* 1. Sidebar Categories */}
@@ -141,18 +146,70 @@ export const EditorLayout: React.FC = () => {
 
       {/* 3. Main Area */}
       <div className="main-area">
-        <div className="preview-area" {...canvasInteraction}>
-          <canvas ref={canvasRef} />
+        <div 
+          className="preview-area" 
+          {...canvasInteraction}
+          style={{
+            ...canvasInteraction.style,
+            ...(isFullscreen ? {
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              width: '100vw',
+              height: '100vh',
+              zIndex: 9999,
+              backgroundColor: '#0a0a0a',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'hidden',
+              padding: 0
+            } : {})
+          }}
+        >
+          <canvas 
+            ref={canvasRef} 
+            style={{
+              transform: isFullscreen 
+                ? `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})` 
+                : 'none',
+              transition: 'none',
+              transformOrigin: 'center',
+              // Ensure canvas fits within the container (screen in fullscreen mode)
+              maxWidth: '100%',
+              maxHeight: '100%',
+              display: 'block',
+              boxShadow: isFullscreen ? '0 0 50px rgba(0,0,0,0.5)' : 'none'
+            }}
+          />
           
-          <div className="toolbar-top-left">
-             <button onClick={() => undo()} disabled={pastStates.length === 0}>◀</button>
-             <button onClick={() => redo()} disabled={futureStates.length === 0}>▶</button>
-          </div>
+          {!isFullscreen && (
+            <>
+              <div 
+                className="toolbar-top-left"
+                onMouseDown={stopPropagation}
+                onMouseUp={stopPropagation}
+                onTouchStart={stopPropagation}
+                onTouchEnd={stopPropagation}
+                onClick={stopPropagation}
+              >
+                 <button onClick={() => undo()} disabled={pastStates.length === 0}>◀</button>
+                 <button onClick={() => redo()} disabled={futureStates.length === 0}>▶</button>
+              </div>
 
-          <div className="toolbar-top-right">
-             <button onClick={handleSavePreset}>💾</button>
-             <button onClick={handleDownload} disabled={isExporting}>⬇</button>
-          </div>
+              <div 
+                className="toolbar-top-right"
+                onMouseDown={stopPropagation}
+                onMouseUp={stopPropagation}
+                onTouchStart={stopPropagation}
+                onTouchEnd={stopPropagation}
+                onClick={stopPropagation}
+              >
+                 <button onClick={handleSavePreset}>💾</button>
+                 <button onClick={handleDownload} disabled={isExporting}>⬇</button>
+              </div>
+            </>
+          )}
         </div>
 
         {/* 4. Layer Panel */}
