@@ -53,13 +53,16 @@ export class TiledExporter {
         alpha: true,
         preserveDrawingBuffer: true 
     });
+    renderer.setPixelRatio(1);
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     renderer.setSize(maxRenderSize, maxRenderSize); // 初期サイズ（ループ内で変えても良い）
     
     // テクスチャ作成
     const texture = new THREE.Texture(originalImage);
-    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.colorSpace = THREE.NoColorSpace;
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
     // エッジの処理: ClampToEdgeWrapping (デフォルト) により、
     // 画像外を参照しようとすると端の色が伸びる（パディングとして正しい挙動）
     texture.wrapS = THREE.ClampToEdgeWrapping;
@@ -80,8 +83,14 @@ export class TiledExporter {
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 10);
     camera.position.z = 1;
 
-    // Composer
-    const composer = new EffectComposer(renderer);
+    // Composer (16bit HalfFloatType を使用)
+    const renderTarget = new THREE.WebGLRenderTarget(maxRenderSize, maxRenderSize, {
+      type: THREE.HalfFloatType,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      generateMipmaps: false
+    });
+    const composer = new EffectComposer(renderer, renderTarget);
 
     // Layer Passes
     const passes: ShaderPass[] = [];

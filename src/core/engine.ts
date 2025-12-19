@@ -130,7 +130,15 @@ export class Engine {
   private rebuildPipeline() {
     if (!this.imageTexture) return;
 
-    this.composer = new EffectComposer(this.renderer);
+    // 16bit (HalfFloatType) のレンダーターゲットを使用
+    const renderTarget = new THREE.WebGLRenderTarget(this.renderWidth, this.renderHeight, {
+      type: THREE.HalfFloatType,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      generateMipmaps: false
+    });
+    
+    this.composer = new EffectComposer(this.renderer, renderTarget);
     this.composer.setSize(this.renderWidth, this.renderHeight);
     
     this.passMap.clear();
