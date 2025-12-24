@@ -355,9 +355,18 @@ export const ImageCropper: React.FC = () => {
       targetBoxW = targetSize * targetAspect;
     }
 
-    const targetScale = currentState.scale * (targetBoxW / currentState.boxWidth);
-    const targetPanX = (currentState.panX - currentState.boxOffsetX) * (targetBoxW / currentState.boxWidth);
-    const targetPanY = (currentState.panY - currentState.boxOffsetY) * (targetBoxW / currentState.boxWidth);
+    // Calculate the scale multiplier based on box size change
+    
+      // Use rotated-space projection so drag preview and final match
+      const scaleMultiplier = targetBoxW / currentState.boxWidth;
+      const rad = currentState.smoothRotation * Math.PI / 180;
+      const C = Math.cos(-rad);
+      const S = Math.sin(-rad);
+      const boxLocalX = currentState.boxOffsetX * C - currentState.boxOffsetY * S;
+      const boxLocalY = currentState.boxOffsetX * S + currentState.boxOffsetY * C;
+      const targetScale = currentState.scale * scaleMultiplier;
+      const targetPanX = (currentState.panX - boxLocalX) * scaleMultiplier;
+      const targetPanY = (currentState.panY - boxLocalY) * scaleMultiplier;
 
     const start = {
       w: currentState.boxWidth,
@@ -399,22 +408,7 @@ export const ImageCropper: React.FC = () => {
       if (p < 1) {
         requestAnimationFrame(loop);
       } else {
-        const finalState = { ...currentState, ...end };
-        const reqScale = getRequiredScale(finalState);
-        if (reqScale > end.s + 1e-9) {
-          const fix = reqScale / end.s;
-          updateState({
-            boxWidth: end.w,
-            boxHeight: end.h,
-            boxOffsetX: 0,
-            boxOffsetY: 0,
-            scale: reqScale,
-            panX: end.px * fix,
-            panY: end.py * fix,
-            baseScale: reqScale,
-            isAnimating: false,
-          });
-        } else {
+          // Finalize without additional scale/pan correction to avoid jump
           updateState({
             boxWidth: end.w,
             boxHeight: end.h,
@@ -426,7 +420,6 @@ export const ImageCropper: React.FC = () => {
             baseScale: end.s,
             isAnimating: false,
           });
-        }
       }
     };
     

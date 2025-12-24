@@ -33,8 +33,14 @@ export class CropRenderer {
     const panScaleGroup = new THREE.Group();
     panScaleGroup.add(baseGroup);
     panScaleGroup.scale.set(state.scale, state.scale, 1);
-    panScaleGroup.position.x = state.panX - state.boxOffsetX;
-    panScaleGroup.position.y = -(state.panY - state.boxOffsetY);
+    // Project box offset into rotated local space so preview matches final
+    const rad = state.smoothRotation * Math.PI / 180;
+    const C = Math.cos(-rad);
+    const S = Math.sin(-rad);
+    const boxLocalX = state.boxOffsetX * C - state.boxOffsetY * S;
+    const boxLocalY = state.boxOffsetX * S + state.boxOffsetY * C;
+    panScaleGroup.position.x = state.panX - boxLocalX;
+    panScaleGroup.position.y = -(state.panY - boxLocalY);
 
     const smoothGroup = new THREE.Group();
     smoothGroup.add(panScaleGroup);

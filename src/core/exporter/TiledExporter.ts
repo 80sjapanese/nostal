@@ -92,8 +92,14 @@ export class TiledExporter {
 
       const panGroup = new THREE.Group();
       panGroup.add(baseGroup);
-      panGroup.position.x = (cropState!.panX - cropState!.boxOffsetX) / cropState!.scale;
-      panGroup.position.y = - (cropState!.panY - cropState!.boxOffsetY) / cropState!.scale;
+      // Project boxOffset into rotated local space to match preview/apply
+      const rad = cropState!.smoothRotation * Math.PI / 180;
+      const C = Math.cos(-rad);
+      const S = Math.sin(-rad);
+      const boxLocalX = cropState!.boxOffsetX * C - cropState!.boxOffsetY * S;
+      const boxLocalY = cropState!.boxOffsetX * S + cropState!.boxOffsetY * C;
+      panGroup.position.x = (cropState!.panX - boxLocalX) / cropState!.scale;
+      panGroup.position.y = - (cropState!.panY - boxLocalY) / cropState!.scale;
 
       const smoothGroup = new THREE.Group();
       smoothGroup.add(panGroup);
