@@ -6,6 +6,11 @@ import { useAppStore } from '../store/useAppStore';
 import { getPlugin } from './pluginRegistry';
 
 export class Engine {
+  // Simple in-memory cache to reuse textures across undo/redo crop steps
+  private static textureCache: Map<string, THREE.Texture> = new Map();
+  private static imageCache: Map<string, HTMLImageElement> = new Map();
+  private static readonly CACHE_LIMIT = 8;
+
   private renderer: THREE.WebGLRenderer;
   private composer: EffectComposer | null = null;
   private scene: THREE.Scene;
@@ -93,26 +98,60 @@ export class Engine {
   }
 
   private loadImage(src: string) {
-    const loader = new THREE.TextureLoader();
-    
-    loader.load(src, (tex) => {
-      if (this.imageTexture) this.imageTexture.dispose();
-
-      this.imageTexture = tex;
-      // 生のRGB値として扱う
-      tex.colorSpace = THREE.NoColorSpace; 
-      tex.minFilter = THREE.LinearFilter;
-      tex.magFilter = THREE.LinearFilter;
-      tex.generateMipmaps = false; 
-
+    const useCached = Engine.textureCache.get(src);
+    if (useCached) {
+      this.imageTexture = useCached;
+      const img = Engine.imageCache.get(src)!;
       const maxDim = 1024;
-      const aspect = tex.image.width / tex.image.height;
-      
-      if (tex.image.width > tex.image.height) {
-        this.renderWidth = Math.min(tex.image.width, maxDim);
+      const aspect = img.naturalWidth / img.naturalHeight;
+      if (img.naturalWidth > img.naturalHeight) {
+        this.renderWidth = Math.min(img.naturalWidth, maxDim);
         this.renderHeight = this.renderWidth / aspect;
       } else {
-        this.renderHeight = Math.min(tex.image.height, maxDim);
+        this.renderHeight = Math.min(img.naturalHeight, maxDim);
+        this.renderWidth = this.renderHeight * aspect;
+      }
+      this.renderWidth = Math.floor(this.renderWidth);
+      this.renderHeight = Math.floor(this.renderHeight);
+      this.renderer.setSize(this.renderWidth, this.renderHeight);
+      this.prevLayerStructure = [];
+      this.rebuildPipeline();
+      this.render();
+      return;
+    }
+
+    // Use HTMLImageElement to reliably handle both file URLs and data URLs
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const tex = new THREE.Texture(img);
+      tex.colorSpace = THREE.NoColorSpace; // treat as linear to match existing pipeline
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      tex.needsUpdate = true;
+
+      // Cache eviction (simple FIFO)
+      Engine.textureCache.set(src, tex);
+      Engine.imageCache.set(src, img);
+      if (Engine.textureCache.size > Engine.CACHE_LIMIT) {
+        const firstKey = Engine.textureCache.keys().next().value as string;
+        const firstTex = Engine.textureCache.get(firstKey);
+        if (firstTex) firstTex.dispose();
+        Engine.textureCache.delete(firstKey);
+        Engine.imageCache.delete(firstKey);
+      }
+
+      this.imageTexture = tex;
+
+      const maxDim = 1024;
+      const aspect = img.naturalWidth / img.naturalHeight;
+
+      if (img.naturalWidth > img.naturalHeight) {
+        this.renderWidth = Math.min(img.naturalWidth, maxDim);
+        this.renderHeight = this.renderWidth / aspect;
+      } else {
+        this.renderHeight = Math.min(img.naturalHeight, maxDim);
         this.renderWidth = this.renderHeight * aspect;
       }
 
@@ -120,11 +159,12 @@ export class Engine {
       this.renderHeight = Math.floor(this.renderHeight);
 
       this.renderer.setSize(this.renderWidth, this.renderHeight);
-      
+
       this.prevLayerStructure = [];
       this.rebuildPipeline();
       this.render();
-    });
+    };
+    img.src = src;
   }
 
   private rebuildPipeline() {

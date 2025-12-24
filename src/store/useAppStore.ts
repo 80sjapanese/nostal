@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { temporal } from 'zundo';
 import { LayerInstance } from '../types/Plugin';
+import type { CropState } from '../types/Crop';
 import { v4 as uuidv4 } from 'uuid';
 
 interface ViewTransform {
@@ -10,14 +11,19 @@ interface ViewTransform {
   scale: number;
 }
 
+// moved to src/types/Crop.ts
+
 interface AppState {
   imageSrc: string | null;
+  originalImageSrc: string | null; // クロップ前のオリジナル画像
   layers: LayerInstance[];
   transientParams: Record<string, Record<string, number>>; 
   selectedLayerId: string | null;
   isComparing: boolean;
   isFullscreen: boolean;
+  isCropMode: boolean;
   viewTransform: ViewTransform;
+  cropState: CropState | null;
 
   setImage: (src: string) => void;
   addLayer: (pluginId: string) => void;
@@ -29,6 +35,10 @@ interface AppState {
   setIsComparing: (isComparing: boolean) => void;
   toggleFullscreen: () => void;
   setViewTransform: (transform: ViewTransform | ((prev: ViewTransform) => ViewTransform)) => void;
+  enterCropMode: () => void;
+  exitCropMode: () => void;
+  setCropState: (state: CropState) => void;
+  applyCrop: (croppedImageSrc: string) => void;
 }
 
 export const useAppStore = create(
@@ -36,14 +46,17 @@ export const useAppStore = create(
     temporal<AppState>(
       (set, get) => ({
         imageSrc: null,
+        originalImageSrc: null,
         layers: [],
         transientParams: {},
         selectedLayerId: null,
         isComparing: false,
         isFullscreen: false,
+        isCropMode: false,
         viewTransform: { x: 0, y: 0, scale: 1 },
+        cropState: null,
 
-        setImage: (src) => set({ imageSrc: src }),
+        setImage: (src) => set({ imageSrc: src, originalImageSrc: src }),
 
         addLayer: (pluginId) => set((state) => {
           const newLayer: LayerInstance = {
@@ -97,12 +110,30 @@ export const useAppStore = create(
         setViewTransform: (transform) => set((state) => ({
           viewTransform: typeof transform === 'function' ? transform(state.viewTransform) : transform
         })),
+
+        enterCropMode: () => set({ isCropMode: true }),
+        
+        exitCropMode: () => set({ isCropMode: false }),
+        
+        setCropState: (cropState) => set({ cropState }),
+        
+        applyCrop: (croppedImageSrc) => set({ 
+          imageSrc: croppedImageSrc, 
+          isCropMode: false 
+        }),
       }),
       {
-        // imageSrc, isComparing, isFullscreen, viewTransform は履歴管理しない
-        partialize: (state) => ({ layers: state.layers } as AppState),
+        // 履歴にはレイヤーと「適用済みの画像（imageSrc）」、およびその時点のcropStateを保存
+        // equalityはlayersとimageSrcのみで判定し、cropStateだけの変更では履歴を増やさない
+        partialize: (state) => ({
+          layers: state.layers,
+          imageSrc: state.imageSrc,
+          cropState: state.cropState,
+        } as unknown as AppState),
         equality: (pastState, currentState) => {
-          return JSON.stringify(pastState.layers) === JSON.stringify(currentState.layers);
+          const layersEqual = JSON.stringify(pastState.layers) === JSON.stringify(currentState.layers);
+          const imageEqual = (pastState as any).imageSrc === (currentState as any).imageSrc;
+          return layersEqual && imageEqual;
         },
         limit: 50
       }

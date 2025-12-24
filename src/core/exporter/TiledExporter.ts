@@ -3,12 +3,14 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { LayerInstance } from '../../types/Plugin';
+import type { CropState } from '../../types/Crop';
 import { getPlugin } from '../pluginRegistry';
 
 export class TiledExporter {
   static async export(
     originalImage: HTMLImageElement,
-    layers: LayerInstance[]
+    layers: LayerInstance[],
+    cropState?: CropState
   ): Promise<Blob> {
     const fullWidth = originalImage.naturalWidth;
     const fullHeight = originalImage.naturalHeight;
@@ -26,16 +28,20 @@ export class TiledExporter {
     });
     maxPadding = Math.ceil(maxPadding);
 
+    const isCropped = !!cropState;
+    const exportWidth = isCropped ? Math.floor(cropState!.boxWidth / cropState!.scale) : fullWidth;
+    const exportHeight = isCropped ? Math.floor(cropState!.boxHeight / cropState!.scale) : fullHeight;
+
     // 2. タイル設定
     // 4096px などの大きなサイズでも良いが、安全のため 2048px 程度で分割
     const tileSize = 2048; 
-    const cols = Math.ceil(fullWidth / tileSize);
-    const rows = Math.ceil(fullHeight / tileSize);
+    const cols = Math.ceil(exportWidth / tileSize);
+    const rows = Math.ceil(exportHeight / tileSize);
 
     // 3. 出力用Canvas
     const outputCanvas = document.createElement('canvas');
-    outputCanvas.width = fullWidth;
-    outputCanvas.height = fullHeight;
+    outputCanvas.width = exportWidth;
+    outputCanvas.height = exportHeight;
     const ctx = outputCanvas.getContext('2d');
     if (!ctx) throw new Error('Failed to create export context');
 
@@ -77,7 +83,26 @@ export class TiledExporter {
     const planeGeo = new THREE.PlaneGeometry(fullWidth, fullHeight);
     const planeMat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
     const baseMesh = new THREE.Mesh(planeGeo, planeMat);
-    scene.add(baseMesh);
+    if (isCropped) {
+      // Transform stack equivalent to cropper, but in original pixel units
+      const baseGroup = new THREE.Group();
+      baseGroup.add(baseMesh);
+      baseGroup.rotation.z = -(cropState!.baseRotationIndex * 90) * Math.PI / 180;
+      baseGroup.scale.set(cropState!.flipX, cropState!.flipY, 1);
+
+      const panGroup = new THREE.Group();
+      panGroup.add(baseGroup);
+      panGroup.position.x = (cropState!.panX - cropState!.boxOffsetX) / cropState!.scale;
+      panGroup.position.y = - (cropState!.panY - cropState!.boxOffsetY) / cropState!.scale;
+
+      const smoothGroup = new THREE.Group();
+      smoothGroup.add(panGroup);
+      smoothGroup.rotation.z = -cropState!.smoothRotation * Math.PI / 180;
+
+      scene.add(smoothGroup);
+    } else {
+      scene.add(baseMesh);
+    }
 
     // カメラ設定
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 10);
@@ -123,11 +148,11 @@ export class TiledExporter {
 
     // 5. タイリングループ
     for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < cols; x++) {
-            const tileX = x * tileSize;
-            const tileY = y * tileSize;
-            const currentTileW = Math.min(tileSize, fullWidth - tileX);
-            const currentTileH = Math.min(tileSize, fullHeight - tileY);
+      for (let x = 0; x < cols; x++) {
+        const tileX = x * tileSize;
+        const tileY = y * tileSize;
+        const currentTileW = Math.min(tileSize, exportWidth - tileX);
+        const currentTileH = Math.min(tileSize, exportHeight - tileY);
 
             // 必要なレンダリング範囲（パディング込み）
             // 画像座標系: 左上が(0,0)、右がX+、下がY+
@@ -140,21 +165,19 @@ export class TiledExporter {
             renderer.setSize(renderW, renderH);
             composer.setSize(renderW, renderH);
 
-            // 【重要】 カメラを移動させて「パディング込みの範囲」だけを映す
-            // Three.jsの座標系: 中心(0,0)、右がX+、上がY+
-            // 画像座標(ix, iy) -> World座標(wx, wy) への変換
-            // WX = ix - (fullWidth / 2) + (renderW / 2)  <-- 中心座標
-            
-            // レンダリングしたい矩形の中心座標（画像空間）
-            const centerX_img = renderX + (renderW / 2);
-            const centerY_img = renderY + (renderH / 2);
-
-            // World空間に変換 (Y軸は反転)
-            const worldX = centerX_img - (fullWidth / 2);
-            const worldY = (fullHeight / 2) - centerY_img;
-
-            // カメラ位置セット
-            camera.position.set(worldX, worldY, 1);
+            if (!isCropped) {
+              // 既存: 全画面タイルレンダリング
+              const centerX_img = renderX + (renderW / 2);
+              const centerY_img = renderY + (renderH / 2);
+              const worldX = centerX_img - (fullWidth / 2);
+              const worldY = (fullHeight / 2) - centerY_img;
+              camera.position.set(worldX, worldY, 1);
+            } else {
+              // クロップ領域の座標系を原点(0,0)中心としてタイル走査
+              const centerX_crop = (-exportWidth / 2) + tileX + (currentTileW / 2);
+              const centerY_crop = (+exportHeight / 2) - tileY - (currentTileH / 2);
+              camera.position.set(centerX_crop, centerY_crop, 1);
+            }
             
             // カメラの画角設定 (Orthographic)
             // 中心から左右上下への距離

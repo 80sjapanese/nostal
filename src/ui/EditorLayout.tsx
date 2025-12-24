@@ -7,8 +7,8 @@ import { Select } from './components/Select';
 import { Checkbox } from './components/Checkbox';
 import { TiledExporter } from '../core/exporter/TiledExporter';
 import { useCanvasInteraction } from './hooks/useCanvasInteraction';
-// 作成したコンポーネントをインポート
 import { SortableLayerItem } from './components/SortableLayerItem';
+import { ImageCropper } from './components/ImageCropper';
 import { useStore } from 'zustand';
 
 // dnd-kit 関連
@@ -35,7 +35,7 @@ export const EditorLayout: React.FC = () => {
     layers, selectedLayerId, transientParams, 
     addLayer, selectLayer, reorderLayers, 
     setTransientParam, commitParam, imageSrc,
-    isFullscreen, viewTransform
+    isFullscreen, viewTransform, isCropMode, enterCropMode
   } = useAppStore();
 
   const { undo, redo, pastStates, futureStates } = useStore(useAppStore.temporal, (state) => state);
@@ -84,11 +84,26 @@ export const EditorLayout: React.FC = () => {
   };
 
   const handleDownload = async () => {
-    /* ... 既存のダウンロード処理 ... */
-    if (!imageElementRef.current || isExporting) return;
+    if (isExporting) return;
     setIsExporting(true);
     try {
-        const blob = await TiledExporter.export(imageElementRef.current, layers);
+        // Export from original image at full resolution, applying cropState if present
+        const src = useAppStore.getState().originalImageSrc || imageSrc;
+        if (!src) throw new Error('No image source');
+
+        const imageToExport = new Image();
+        imageToExport.crossOrigin = 'anonymous';
+        imageToExport.src = src;
+        await new Promise((resolve, reject) => {
+          imageToExport.onload = resolve as any;
+          imageToExport.onerror = reject as any;
+        });
+        
+        const blob = await TiledExporter.export(
+          imageToExport,
+          layers,
+          useAppStore.getState().cropState || undefined
+        );
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -114,6 +129,7 @@ export const EditorLayout: React.FC = () => {
   };
 
   return (
+    <>
     <div className="editor-container">
       {/* 1. Sidebar Categories */}
       <div className="sidebar-categories">
@@ -207,6 +223,17 @@ export const EditorLayout: React.FC = () => {
               >
                  <button onClick={handleSavePreset}>💾</button>
                  <button onClick={handleDownload} disabled={isExporting}>⬇</button>
+              </div>
+
+              <div 
+                className="toolbar-bottom-left"
+                onMouseDown={stopPropagation}
+                onMouseUp={stopPropagation}
+                onTouchStart={stopPropagation}
+                onTouchEnd={stopPropagation}
+                onClick={stopPropagation}
+              >
+                 <button onClick={enterCropMode} disabled={!imageSrc}>✂ Crop</button>
               </div>
             </>
           )}
@@ -311,5 +338,7 @@ export const EditorLayout: React.FC = () => {
         )}
       </div>
     </div>
+    {isCropMode && <ImageCropper />}
+    </>
   );
 };
