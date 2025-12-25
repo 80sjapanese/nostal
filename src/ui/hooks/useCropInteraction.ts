@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { CropperUIState } from '../../types/Crop';
 import { getRequiredScale } from './useCropState';
 import { calculateResize, clampPan, animateReset } from './useCropLogic';
@@ -10,47 +10,54 @@ export function useCropInteraction(
   state: CropperUIState | null,
   updateState: (updates: Partial<CropperUIState>) => void
 ) {
+  // Keep refs to avoid reattaching listeners each state change
+  const stateRef = useRef<CropperUIState | null>(state);
+  const updateRef = useRef<typeof updateState>(updateState);
+
+  useEffect(() => { stateRef.current = state; }, [state]);
+  useEffect(() => { updateRef.current = updateState; }, [updateState]);
+
   useEffect(() => {
-    if (!state) return;
-
     const handleMouseMove = (e: MouseEvent) => {
-      if (state.isAnimating) return;
-      
-      const dx = e.clientX - state.lastMouseX;
-      const dy = e.clientY - state.lastMouseY;
+      const st = stateRef.current;
+      const upd = updateRef.current;
+      if (!st || st.isAnimating) return;
 
-      if (state.isDraggingImage) {
-        const rad = state.smoothRotation * Math.PI / 180;
+      const dx = e.clientX - st.lastMouseX;
+      const dy = e.clientY - st.lastMouseY;
+
+      if (st.isDraggingImage) {
+        const rad = st.smoothRotation * Math.PI / 180;
         const cos = Math.cos(-rad);
         const sin = Math.sin(-rad);
         const localDx = dx * cos - dy * sin;
         const localDy = dx * sin + dy * cos;
 
-        const newPanX = state.panX + localDx;
-        const newPanY = state.panY + localDy;
-        
-        const clamped = clampPan({ ...state, panX: newPanX, panY: newPanY });
-        updateState({
+        const newPanX = st.panX + localDx;
+        const newPanY = st.panY + localDy;
+
+        const clamped = clampPan({ ...st, panX: newPanX, panY: newPanY });
+        upd({
           ...clamped,
           lastMouseX: e.clientX,
           lastMouseY: e.clientY,
         });
       }
 
-      if (state.isResizingBox && state.resizeDir) {
+      if (st.isResizingBox && st.resizeDir) {
         const res = calculateResize(
           dx,
           dy,
-          state.resizeDir,
-          state.resizeStartBoxWidth,
-          state.resizeStartBoxHeight,
-          state.resizeStartBoxOffsetX,
-          state.resizeStartBoxOffsetY,
-          state.aspectRatioVal !== null,
-          state
+          st.resizeDir,
+          st.resizeStartBoxWidth,
+          st.resizeStartBoxHeight,
+          st.resizeStartBoxOffsetX,
+          st.resizeStartBoxOffsetY,
+          st.aspectRatioVal !== null,
+          st
         );
-        
-        updateState({
+
+        upd({
           boxWidth: res.w,
           boxHeight: res.h,
           boxOffsetX: res.x,
@@ -60,26 +67,26 @@ export function useCropInteraction(
     };
 
     const handleMouseUp = () => {
-      if (!state) return;
-      
-      if (state.isResizingBox) {
-        updateState({ isDraggingImage: false, isResizingBox: false });
-        animateReset(state, updateState);
+      const st = stateRef.current;
+      const upd = updateRef.current;
+      if (!st) return;
+
+      if (st.isResizingBox) {
+        upd({ isDraggingImage: false, isResizingBox: false });
+        animateReset(st, upd);
       } else {
-        updateState({ isDraggingImage: false });
+        upd({ isDraggingImage: false });
       }
     };
 
-    if (state.isDraggingImage || state.isResizingBox) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
 
-      return () => {
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-      };
-    }
-  }, [state, updateState]);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
 }
 
 /**

@@ -32,6 +32,7 @@ export function calculateResize(
   if (newL > newR) [newL, newR] = [newR, newL];
   if (newT > newB) [newT, newB] = [newB, newT];
 
+  // Keep aspect ratio if required
   if (keepRatio && currentState.aspectRatioVal) {
     const ratio = currentState.aspectRatioVal;
     
@@ -60,12 +61,68 @@ export function calculateResize(
     }
   }
 
-  const w = Math.max(newR - newL, 50);
-  const h = Math.max(newB - newT, 50);
-  const x = (newL + newR) / 2;
-  const y = (newT + newB) / 2;
+  // Constraint check: ensure all corners are within rotated/panned image bounds
+  const corners = [
+    { x: newL, y: newT }, { x: newR, y: newT },
+    { x: newR, y: newB }, { x: newL, y: newB }
+  ];
 
-  return { w, h, x, y };
+  let valid = true;
+  for (const p of corners) {
+    const c = constrainPoint(p.x, p.y, currentState);
+    if (Math.abs(c.x - p.x) > 0.1 || Math.abs(c.y - p.y) > 0.1) {
+      valid = false;
+      break;
+    }
+  }
+
+  if (!valid) {
+    // Anchor point selection (opposite corner or center for edge moves)
+    let anx: number, any: number;
+    if (dir === 'tl') { anx = newR; any = newB; }
+    else if (dir === 'br') { anx = newL; any = newT; }
+    else if (dir === 'tr') { anx = newL; any = newB; }
+    else if (dir === 'bl') { anx = newR; any = newT; }
+    else { anx = (newL + newR) / 2; any = (newT + newB) / 2; }
+
+    // Binary search the scale factor between anchor and new rect to fit constraints
+    let low = 0, high = 1, bestScale = 0;
+    for (let i = 0; i < 10; i++) {
+      const mid = (low + high) / 2;
+      const tL = anx + (newL - anx) * mid;
+      const tR = anx + (newR - anx) * mid;
+      const tT = any + (newT - any) * mid;
+      const tB = any + (newB - any) * mid;
+      const tCorners = [
+        { x: tL, y: tT }, { x: tR, y: tT },
+        { x: tR, y: tB }, { x: tL, y: tB }
+      ];
+      let ok = true;
+      for (const p of tCorners) {
+        const c = constrainPoint(p.x, p.y, currentState);
+        if (Math.abs(c.x - p.x) > 0.1 || Math.abs(c.y - p.y) > 0.1) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) { bestScale = mid; low = mid; }
+      else { high = mid; }
+    }
+    newL = anx + (newL - anx) * bestScale;
+    newR = anx + (newR - anx) * bestScale;
+    newT = any + (newT - any) * bestScale;
+    newB = any + (newB - any) * bestScale;
+  }
+
+  if (newR - newL < 50) newR = newL + 50;
+  if (newB - newT < 50) newB = newT + 50;
+
+  return {
+    w: newR - newL,
+    h: newB - newT,
+    x: (newL + newR) / 2,
+    y: (newT + newB) / 2,
+  };
 }
 
 /**
@@ -107,6 +164,49 @@ export function clampPan(currentState: CropperUIState): { panX: number; panY: nu
   else clampedPanY = Math.max(minPanY, Math.min(maxPanY, currentState.panY));
   
   return { panX: clampedPanX, panY: clampedPanY };
+}
+
+/**
+ * 点を画像の有効領域へ投影（制約行列で半平面内へ押し戻す）
+ */
+export function constrainPoint(x: number, y: number, currentState: CropperUIState) {
+  const constraints = getConstraintsParams(currentState);
+  let cx = x, cy = y;
+
+  for (let i = 0; i < 10; i++) {
+    let satisfied = true;
+    for (const { a, b, d } of constraints) {
+      const val = a * cx + b * cy;
+      if (val > d + 1e-9) {
+        satisfied = false;
+        const diff = val - d;
+        cx -= a * diff;
+        cy -= b * diff;
+      }
+    }
+    if (satisfied) break;
+  }
+
+  return { x: cx, y: cy };
+}
+
+/**
+ * 回転・パン・スケールを考慮した半平面制約パラメータ
+ */
+export function getConstraintsParams(currentState: CropperUIState) {
+  const rad = currentState.smoothRotation * Math.PI / 180;
+  const C = Math.cos(-rad);
+  const S = Math.sin(-rad);
+  const limW = (currentState.currentImgWidth * currentState.scale) / 2;
+  const limH = (currentState.currentImgHeight * currentState.scale) / 2;
+  const constraints: Array<{ a: number; b: number; d: number }> = [];
+
+  constraints.push({ a: C,  b: -S, d: limW + currentState.panX });
+  constraints.push({ a: -C, b:  S, d: limW - currentState.panX });
+  constraints.push({ a: S,  b:  C, d: limH + currentState.panY });
+  constraints.push({ a: -S, b: -C, d: limH - currentState.panY });
+
+  return constraints;
 }
 
 /**
