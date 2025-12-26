@@ -24,16 +24,19 @@ export const DraggableGraphWindow: React.FC<DraggableGraphWindowProps> = ({ prev
   const rafRef = useRef<number | null>(null);
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    // ヘッダー部分のみでドラッグを開始
-    if ((e.target as HTMLElement).closest('.graph-window-header')) {
-      setIsDragging(true);
-      const rect = windowRef.current!.getBoundingClientRect();
-      dragOffsetRef.current = {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-      };
-      pendingPosRef.current = position;
+    // ウィンドウ全体でドラッグ可能（閉じるボタンを除く）
+    const target = e.target as HTMLElement;
+    if (target.closest('button')) {
+      // 閉じるボタンをクリックした場合はドラッグなし
+      return;
     }
+    setIsDragging(true);
+    const rect = windowRef.current!.getBoundingClientRect();
+    dragOffsetRef.current = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+    pendingPosRef.current = position;
   };
 
   useEffect(() => {
@@ -106,8 +109,8 @@ export const DraggableGraphWindow: React.FC<DraggableGraphWindowProps> = ({ prev
         position: 'fixed',
         left: position.x,
         top: position.y,
-        width: '400px',
-        height: '320px',
+        width: '300px',
+        height: '250px',
         backgroundColor: '#2a2a2a',
         border: '1px solid #444',
         borderRadius: '8px',

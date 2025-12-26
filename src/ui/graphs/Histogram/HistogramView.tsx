@@ -20,7 +20,7 @@ export const HistogramView: React.FC<Props> = ({ previewCanvasRef }) => {
     if (!forceImmediate) {
       throttleRef.current = window.setTimeout(() => {
         throttleRef.current = null;
-      }, 33); // 30 FPS max during rapid updates
+      }, 50); // 20 FPS max during rapid updates
     }
 
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
