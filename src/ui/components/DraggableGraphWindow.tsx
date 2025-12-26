@@ -9,7 +9,11 @@ const GRAPH_TYPES = [
   { value: 'vectorscope', label: 'Vectorscope' },
 ];
 
-export const DraggableGraphWindow: React.FC = () => {
+interface DraggableGraphWindowProps {
+  previewCanvasRef?: React.RefObject<HTMLCanvasElement>;
+}
+
+export const DraggableGraphWindow: React.FC<DraggableGraphWindowProps> = ({ previewCanvasRef }) => {
   const { graphWindow, setGraphWindowPosition, setGraphType, toggleGraphWindow } = useAppStore();
   const { isOpen, position, selectedGraphType } = graphWindow;
   
@@ -180,23 +184,51 @@ export const DraggableGraphWindow: React.FC = () => {
         style={{
           flex: 1,
           display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '16px',
-          color: '#666',
-          fontSize: '14px',
+          alignItems: 'stretch',
+          justifyContent: 'stretch',
+          padding: 0,
           backgroundColor: '#1a1a1a',
         }}
       >
-        {/* 将来的にグラフを実装する領域 */}
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ marginBottom: '8px' }}>📊</div>
-          <div>{GRAPH_TYPES.find(t => t.value === selectedGraphType)?.label}</div>
-          <div style={{ fontSize: '12px', marginTop: '4px' }}>
-            (Coming soon...)
+        {selectedGraphType === 'histogram' ? (
+          <div style={{ width: '100%', height: '100%' }}>
+            {/* Lazy import to avoid circular deps */}
+            <HistogramMount previewCanvasRef={previewCanvasRef} />
           </div>
-        </div>
+        ) : (
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+            color: '#666',
+            fontSize: '14px',
+          }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ marginBottom: '8px' }}>📊</div>
+              <div>{GRAPH_TYPES.find(t => t.value === selectedGraphType)?.label}</div>
+              <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                (Coming soon...)
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
+};
+
+// Separate small component to avoid top-level import cycles
+const HistogramMount: React.FC<{ previewCanvasRef?: React.RefObject<HTMLCanvasElement> }>
+  = ({ previewCanvasRef }) => {
+  const [Comp, setComp] = React.useState<React.ComponentType<{ previewCanvasRef?: React.RefObject<HTMLCanvasElement> }> | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    import('../graphs').then(mod => {
+      if (mounted) setComp(() => mod.HistogramView);
+    });
+    return () => { mounted = false; };
+  }, []);
+  return Comp ? <Comp previewCanvasRef={previewCanvasRef} /> : null;
 };

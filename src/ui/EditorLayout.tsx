@@ -352,7 +352,7 @@ export const EditorLayout: React.FC = () => {
       </div>
     </div>
     {isCropMode && <ImageCropper />}
-    <DraggableGraphWindow />
+    <DraggableGraphWindow previewCanvasRef={canvasRef} />
     </>
   );
 };
