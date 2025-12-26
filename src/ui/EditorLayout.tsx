@@ -9,6 +9,7 @@ import { TiledExporter } from '../core/exporter/TiledExporter';
 import { useCanvasInteraction } from './hooks/useCanvasInteraction';
 import { SortableLayerItem } from './components/SortableLayerItem';
 import { ImageCropper } from './components/ImageCropper';
+import { DraggableGraphWindow } from './components/DraggableGraphWindow';
 import { useStore } from 'zustand';
 
 // dnd-kit 関連
@@ -35,7 +36,8 @@ export const EditorLayout: React.FC = () => {
     layers, selectedLayerId, transientParams, 
     addLayer, selectLayer, reorderLayers, 
     setTransientParam, commitParam, imageSrc,
-    isFullscreen, viewTransform, isCropMode, enterCropMode
+    isFullscreen, viewTransform, isCropMode, enterCropMode,
+    toggleGraphWindow
   } = useAppStore();
 
   const { undo, redo, pastStates, futureStates } = useStore(useAppStore.temporal, (state) => state);
@@ -235,6 +237,17 @@ export const EditorLayout: React.FC = () => {
               >
                  <button onClick={enterCropMode} disabled={!imageSrc}>✂ Crop</button>
               </div>
+
+              <div 
+                className="toolbar-bottom-right"
+                onMouseDown={stopPropagation}
+                onMouseUp={stopPropagation}
+                onTouchStart={stopPropagation}
+                onTouchEnd={stopPropagation}
+                onClick={stopPropagation}
+              >
+                 <button onClick={toggleGraphWindow}>📊</button>
+              </div>
             </>
           )}
         </div>
@@ -339,6 +352,7 @@ export const EditorLayout: React.FC = () => {
       </div>
     </div>
     {isCropMode && <ImageCropper />}
+    <DraggableGraphWindow />
     </>
   );
 };

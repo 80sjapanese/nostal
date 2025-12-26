@@ -138,7 +138,7 @@ body, html, #root {
 }
 
 /* ツールバー */
-.toolbar-top-left, .toolbar-top-right, .toolbar-bottom-left {
+.toolbar-top-left, .toolbar-top-right, .toolbar-bottom-left, .toolbar-bottom-right {
   position: absolute;
   display: flex;
   gap: 10px;
@@ -158,6 +158,11 @@ body, html, #root {
 .toolbar-bottom-left {
   bottom: 10px;
   left: 10px;
+}
+
+.toolbar-bottom-right {
+  bottom: 10px;
+  right: 10px;
 }
 
 .preview-area button {

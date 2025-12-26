@@ -11,6 +11,12 @@ interface ViewTransform {
   scale: number;
 }
 
+interface GraphWindowState {
+  isOpen: boolean;
+  position: { x: number; y: number };
+  selectedGraphType: string;
+}
+
 // moved to src/types/Crop.ts
 
 interface AppState {
@@ -24,6 +30,7 @@ interface AppState {
   isCropMode: boolean;
   viewTransform: ViewTransform;
   cropState: CropState | null;
+  graphWindow: GraphWindowState;
 
   setImage: (src: string) => void;
   addLayer: (pluginId: string) => void;
@@ -39,6 +46,9 @@ interface AppState {
   exitCropMode: () => void;
   setCropState: (state: CropState) => void;
   applyCrop: (croppedImageSrc: string) => void;
+  toggleGraphWindow: () => void;
+  setGraphWindowPosition: (position: { x: number; y: number }) => void;
+  setGraphType: (graphType: string) => void;
 }
 
 export const useAppStore = create(
@@ -55,6 +65,11 @@ export const useAppStore = create(
         isCropMode: false,
         viewTransform: { x: 0, y: 0, scale: 1 },
         cropState: null,
+        graphWindow: { 
+          isOpen: false, 
+          position: { x: 100, y: 100 }, 
+          selectedGraphType: 'histogram' 
+        },
 
         setImage: (src) => set({ imageSrc: src, originalImageSrc: src }),
 
@@ -121,6 +136,18 @@ export const useAppStore = create(
           imageSrc: croppedImageSrc, 
           isCropMode: false 
         }),
+
+        toggleGraphWindow: () => set((state) => ({
+          graphWindow: { ...state.graphWindow, isOpen: !state.graphWindow.isOpen }
+        })),
+
+        setGraphWindowPosition: (position) => set((state) => ({
+          graphWindow: { ...state.graphWindow, position }
+        })),
+
+        setGraphType: (selectedGraphType) => set((state) => ({
+          graphWindow: { ...state.graphWindow, selectedGraphType }
+        })),
       }),
       {
         // 履歴にはレイヤーと「適用済みの画像（imageSrc）」、およびその時点のcropStateを保存
