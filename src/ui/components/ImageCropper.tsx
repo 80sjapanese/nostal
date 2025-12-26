@@ -13,6 +13,7 @@ export const ImageCropper: React.FC = () => {
   const [aspectRatio, setAspectRatio] = useState<string>('free');
   
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const rotationInitializedRef = useRef(false);
   const { state, updateState } = useCropState(img, cropState);
 
   // Setup mouse interaction
@@ -21,6 +22,9 @@ export const ImageCropper: React.FC = () => {
   // Load image on mount
   useEffect(() => {
     if (!originalImageSrc) return;
+
+    // Reset rotation init when image changes
+    rotationInitializedRef.current = false;
     
     const image = new Image();
     image.src = originalImageSrc;
@@ -32,6 +36,7 @@ export const ImageCropper: React.FC = () => {
   // Initialize aspect ratio from crop state
   useEffect(() => {
     if (!cropState || !state) return;
+    if (rotationInitializedRef.current) return;
     
     setRotation(cropState.smoothRotation);
     if (cropState.aspectRatioVal) {
@@ -42,6 +47,8 @@ export const ImageCropper: React.FC = () => {
       else if (Math.abs(val - 16/9) < 0.01 || Math.abs(val - 9/16) < 0.01) setAspectRatio('16:9');
       else setAspectRatio('free');
     }
+
+    rotationInitializedRef.current = true;
   }, [cropState, state]);
 
   // Save crop state when changes occur (debounced)
@@ -208,7 +215,13 @@ export const ImageCropper: React.FC = () => {
   };
 
   if (!img || !state) {
-    return <div style={{ color: 'white' }}>Loading...</div>;
+    return (
+      <div style={styles.container}>
+        <div style={styles.workspace}>
+          <div style={styles.loadingContainer}>Loading...</div>
+        </div>
+      </div>
+    );
   }
 
   const isLandscape = state.boxWidth >= state.boxHeight;
@@ -632,5 +645,14 @@ const styles = {
     textAlign: 'right' as const,
     fontSize: '13px',
     fontVariantNumeric: 'tabular-nums' as const,
+  },
+  loadingContainer: {
+    display: 'flex',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    width: '100%',
+    height: '100%',
+    color: '#fff',
+    fontSize: '16px',
   },
 };
