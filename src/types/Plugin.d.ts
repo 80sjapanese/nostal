@@ -37,6 +37,9 @@ export interface PluginDefinition {
   category: 'subjects' | 'lens' | 'film' | 'post' | 'print';
   parameters: ParamDef[];
   fragmentShader: string;
+  assets?: Record<string, string>; // { noiseMap: '/path/to/noise.png' }
+  saveSnapshot?: string; // スナップショット保存名
+  needsSnapshot?: string[]; // 必要なスナップショット名
   getEffectRadius?: (params: Record<string, any>, scale: number) => number;
 }
 
